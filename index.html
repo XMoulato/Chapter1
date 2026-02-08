@@ -1,0 +1,920 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"/>
+<title>Story</title>
+<style>
+  :root{
+    --bg:#ffffff;
+    --ink:#111111;
+    --panel: rgba(255,255,255,.92);
+    --line: rgba(0,0,0,.16);
+    --shadow: 0 18px 70px rgba(0,0,0,.20);
+  }
+  *{box-sizing:border-box}
+  html, body{
+    margin:0;
+    width:100%;
+    height:100%;
+    background:var(--bg);
+    overflow:hidden;
+    font-family: system-ui,-apple-system,"Segoe UI",Tahoma,Arial,sans-serif;
+  }
+
+  canvas{
+    position:fixed;
+    inset:0;
+    width:100vw;
+    height:100svh;
+    display:block;
+    background:var(--bg);
+  }
+
+  /* Replay only at end */
+  .replay{
+    position:fixed;
+    inset:0;
+    display:flex;
+    align-items:center;
+    justify-content:center;
+    pointer-events:none;
+    opacity:0;
+    transition: 220ms ease;
+  }
+  .replay.show{
+    opacity:1;
+    pointer-events:auto;
+  }
+  .replay .btn{
+    appearance:none;
+    border:1px solid var(--line);
+    background: var(--panel);
+    color:#111;
+    padding:14px 18px;
+    border-radius:16px;
+    font-weight:1000;
+    font-size:16px;
+    box-shadow: var(--shadow);
+    cursor:pointer;
+  }
+  .replay .btn:active{ transform: scale(.99); }
+</style>
+</head>
+
+<body>
+  <canvas id="c"></canvas>
+
+  <div class="replay" id="replayWrap" aria-hidden="true">
+    <button class="btn" id="btnReplay">🔁 إعادة</button>
+  </div>
+
+<script>
+(() => {
+  const canvas = document.getElementById('c');
+  const ctx = canvas.getContext('2d');
+
+  const replayWrap = document.getElementById('replayWrap');
+  const btnReplay = document.getElementById('btnReplay');
+
+  const imgMohsen = new Image();
+  imgMohsen.src = "Mohsen.png";
+  const imgWateen = new Image();
+  imgWateen.src = "wateen.png";
+
+  const clamp = (v,a,b)=>Math.max(a,Math.min(b,v));
+  const lerp = (a,b,t)=>a+(b-a)*t;
+  const easeOutCubic = (t)=>1-Math.pow(1-t,3);
+  const easeInOut = (t)=> t<.5 ? 4*t*t*t : 1 - Math.pow(-2*t+2,3)/2;
+
+  function resize(){
+    const dpr = Math.max(1, window.devicePixelRatio || 1);
+    canvas.width  = Math.floor(window.innerWidth  * dpr);
+    canvas.height = Math.floor(window.innerHeight * dpr);
+    ctx.setTransform(dpr,0,0,dpr,0,0);
+  }
+  window.addEventListener('resize', resize);
+  resize();
+
+  function clear(){
+    ctx.fillStyle = "#fff";
+    ctx.fillRect(0,0,window.innerWidth, window.innerHeight);
+  }
+
+  function drawFloor(){
+    const y = window.innerHeight * 0.86;
+    ctx.strokeStyle = "rgba(0,0,0,.14)";
+    ctx.lineWidth = 6;
+    ctx.lineCap = "round";
+    ctx.beginPath();
+    ctx.moveTo(40, y);
+    ctx.lineTo(window.innerWidth - 40, y);
+    ctx.stroke();
+  }
+
+  function roundRect(x,y,w,h,r, fill, stroke){
+    const rr = Math.min(r, w/2, h/2);
+    ctx.beginPath();
+    ctx.moveTo(x+rr, y);
+    ctx.arcTo(x+w, y, x+w, y+h, rr);
+    ctx.arcTo(x+w, y+h, x, y+h, rr);
+    ctx.arcTo(x, y+h, x, y, rr);
+    ctx.arcTo(x, y, x+w, y, rr);
+    ctx.closePath();
+    if(fill) ctx.fill();
+    if(stroke) ctx.stroke();
+  }
+
+  function wrapText(text, maxWidth){
+    const words = text.split(" ");
+    const lines = [];
+    let line = "";
+    for(const w of words){
+      const test = line ? (line + " " + w) : w;
+      if(ctx.measureText(test).width > maxWidth && line){
+        lines.push(line);
+        line = w;
+      }else{
+        line = test;
+      }
+    }
+    if(line) lines.push(line);
+    return lines;
+  }
+
+  function drawSpeech(text, x, y, w, h, tailX, tailY){
+    ctx.fillStyle = "rgba(255,255,255,.97)";
+    ctx.strokeStyle = "rgba(0,0,0,.22)";
+    ctx.lineWidth = 5;
+    roundRect(x,y,w,h,18,true,true);
+
+    ctx.beginPath();
+    ctx.moveTo(tailX, tailY);
+    ctx.lineTo(x + w*0.22, y + h);
+    ctx.lineTo(x + w*0.36, y + h);
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+
+    ctx.fillStyle = "#111";
+    ctx.textAlign = "right";
+    ctx.textBaseline = "top";
+    ctx.font = "1000 28px system-ui, -apple-system, Segoe UI, Tahoma, Arial";
+
+    const pad = 18;
+    const lines = wrapText(text, w - pad*2);
+    let ty = y + 14;
+    for(const ln of lines){
+      ctx.fillText(ln, x + w - pad, ty);
+      ty += 38;
+      if(ty > y + h - 40) break;
+    }
+  }
+
+  function drawDoor(x,y,w,h, knock=0){
+    ctx.strokeStyle = "#111";
+    ctx.lineWidth = 8;
+    ctx.lineJoin = "round";
+
+    ctx.beginPath();
+    ctx.rect(x,y,w,h);
+    ctx.stroke();
+
+    ctx.fillStyle = "#111";
+    ctx.beginPath();
+    ctx.arc(x + w*0.80, y + h*0.55, 10, 0, Math.PI*2);
+    ctx.fill();
+
+    if(knock>0){
+      ctx.strokeStyle = "rgba(0,0,0,.9)";
+      ctx.lineWidth = 6;
+      const kx = x + w*0.14;
+      const ky = y + h*0.35;
+      const amp = 18 * knock;
+      for(let i=0;i<3;i++){
+        ctx.beginPath();
+        ctx.moveTo(kx - i*10, ky + i*18);
+        ctx.lineTo(kx - i*10 + amp, ky + i*18 - amp);
+        ctx.stroke();
+      }
+    }
+  }
+
+  function drawMiniHeart(x,y,size){
+    ctx.save();
+    ctx.translate(x,y);
+    ctx.fillStyle = "#111";
+    ctx.beginPath();
+    ctx.moveTo(0, -size*0.6);
+    ctx.bezierCurveTo(size*0.7, -size*1.4, size*1.8, -size*0.2, 0, size*1.2);
+    ctx.bezierCurveTo(-size*1.8, -size*0.2, -size*0.7, -size*1.4, 0, -size*0.6);
+    ctx.closePath();
+    ctx.fill();
+    ctx.restore();
+  }
+
+  function drawSparkles(cx, cy, t, count=7){
+    ctx.fillStyle = "#111";
+    for(let i=0;i<count;i++){
+      const a = t*7 + i;
+      const sx = cx + Math.cos(a)*42;
+      const sy = cy + Math.sin(a)*30;
+      ctx.beginPath();
+      ctx.arc(sx, sy, 6, 0, Math.PI*2);
+      ctx.fill();
+    }
+  }
+
+  function drawPhone(x, y, w, h, faceImg, pop=1){
+    // phone body
+    ctx.save();
+    const s = pop;
+    ctx.translate(x, y);
+    ctx.scale(s, s);
+
+    ctx.strokeStyle = "#111";
+    ctx.lineWidth = 8;
+    ctx.lineJoin = "round";
+    ctx.fillStyle = "rgba(255,255,255,.98)";
+    roundRect(0,0,w,h,26,true,true);
+
+    // screen
+    ctx.fillStyle = "rgba(0,0,0,.06)";
+    roundRect(12,14,w-24,h-34,18,true,false);
+
+    // camera dot
+    ctx.fillStyle = "#111";
+    ctx.beginPath();
+    ctx.arc(w*0.50, 20, 4, 0, Math.PI*2);
+    ctx.fill();
+
+    // face inside screen
+    if(faceImg && faceImg.complete){
+      ctx.save();
+      ctx.beginPath();
+      roundRect(14,18,w-28,h-42,16,false,false);
+      ctx.clip();
+      ctx.drawImage(faceImg, 10, 6, w-20, h-12);
+      ctx.restore();
+    }
+
+    // little msg badge
+    ctx.fillStyle = "#111";
+    ctx.beginPath();
+    ctx.arc(w-22, 28, 14, 0, Math.PI*2);
+    ctx.fill();
+    ctx.fillStyle = "#fff";
+    ctx.font = "1000 18px system-ui, -apple-system, Segoe UI, Tahoma, Arial";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillText("1", w-22, 28);
+
+    ctx.restore();
+  }
+
+  function drawWorkshopIcon(x, y, t){
+    // simple car + wrench sketch
+    ctx.save();
+    ctx.translate(x,y);
+    ctx.strokeStyle = "#111";
+    ctx.lineWidth = 8;
+    ctx.lineCap = "round";
+    ctx.lineJoin = "round";
+
+    // car body
+    ctx.beginPath();
+    ctx.moveTo(-110, 20);
+    ctx.lineTo(-70, -20);
+    ctx.lineTo(40, -20);
+    ctx.lineTo(80, 10);
+    ctx.lineTo(110, 10);
+    ctx.lineTo(110, 40);
+    ctx.lineTo(-110, 40);
+    ctx.closePath();
+    ctx.stroke();
+
+    // wheels
+    ctx.beginPath(); ctx.arc(-60, 44, 18, 0, Math.PI*2); ctx.stroke();
+    ctx.beginPath(); ctx.arc(70, 44, 18, 0, Math.PI*2); ctx.stroke();
+
+    // wrench (wiggle)
+    const wig = Math.sin(t*10)*0.12;
+    ctx.rotate(wig);
+    ctx.beginPath();
+    ctx.moveTo(-10, -70);
+    ctx.lineTo(60, -120);
+    ctx.stroke();
+
+    // wrench head
+    ctx.beginPath();
+    ctx.moveTo(60, -120);
+    ctx.lineTo(80, -130);
+    ctx.lineTo(90, -110);
+    ctx.stroke();
+
+    ctx.restore();
+  }
+
+  function drawRain(t){
+    // light rain lines over scene
+    ctx.strokeStyle = "rgba(0,0,0,.14)";
+    ctx.lineWidth = 3;
+    for(let i=0;i<38;i++){
+      const x = (i* (window.innerWidth/38)) + ((t*220) % 16);
+      const y = ( (t*380) % window.innerHeight ) - i*12;
+      ctx.beginPath();
+      ctx.moveTo(x, y);
+      ctx.lineTo(x-10, y+26);
+      ctx.stroke();
+    }
+  }
+
+  function drawStamp(text, x, y, w){
+    ctx.save();
+    ctx.translate(x,y);
+    ctx.rotate(-0.06);
+    ctx.strokeStyle = "#111";
+    ctx.lineWidth = 8;
+    const ww = w;
+    roundRect(-ww/2, -52, ww, 104, 18, false, true);
+    ctx.font = "1000 42px system-ui, -apple-system, Segoe UI, Tahoma, Arial";
+    ctx.fillStyle = "#111";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillText(text, 0, 0);
+    ctx.restore();
+  }
+
+  function drawStickman(p){
+    const s = p.scale;
+    const x = p.x, y = p.y;
+
+    ctx.strokeStyle = "#111";
+    ctx.lineWidth = 10*s;
+    ctx.lineCap = "round";
+    ctx.lineJoin = "round";
+
+    const headR = 56*s;
+    const headCx = x;
+    const headCy = y - 190*s;
+
+    ctx.beginPath();
+    ctx.arc(headCx, headCy, headR, 0, Math.PI*2);
+    ctx.stroke();
+
+    if(p.faceImg && p.faceImg.complete){
+      ctx.save();
+      ctx.beginPath();
+      ctx.arc(headCx, headCy, headR-6*s, 0, Math.PI*2);
+      ctx.clip();
+
+      if((p.angryGlow||0) > 0){
+        ctx.fillStyle = `rgba(255,0,0,${0.20*(p.angryGlow||0)})`;
+        ctx.fillRect(headCx-headR, headCy-headR, headR*2, headR*2);
+      }
+
+      const iw = headR*2.2, ih = headR*2.2;
+      ctx.translate(headCx, headCy);
+      ctx.rotate(p.faceTilt || 0);
+      ctx.drawImage(p.faceImg, -iw/2, -ih/2, iw, ih);
+      ctx.restore();
+
+      ctx.beginPath();
+      ctx.arc(headCx, headCy, headR, 0, Math.PI*2);
+      ctx.stroke();
+    }
+
+    const neckY = headCy + headR;
+    const torsoTop = neckY + 10*s;
+    const torsoBot = y - 30*s;
+
+    ctx.beginPath();
+    ctx.moveTo(x, torsoTop);
+    ctx.lineTo(x, torsoBot);
+    ctx.stroke();
+
+    const shoulderY = torsoTop + 40*s;
+    const armLen = 120*s;
+
+    if(p.armPose === 1){
+      ctx.beginPath();
+      ctx.moveTo(x, shoulderY);
+      ctx.lineTo(x + 70*s, shoulderY + 30*s);
+      ctx.lineTo(x + 120*s, shoulderY + 10*s);
+      ctx.stroke();
+
+      ctx.beginPath();
+      ctx.moveTo(x, shoulderY);
+      ctx.lineTo(x - 70*s, shoulderY + 50*s);
+      ctx.stroke();
+    } else if(p.armPose === 2){
+      ctx.beginPath();
+      ctx.moveTo(x, shoulderY);
+      ctx.lineTo(x + 90*s, shoulderY - 10*s);
+      ctx.stroke();
+
+      ctx.beginPath();
+      ctx.moveTo(x, shoulderY);
+      ctx.lineTo(x - 90*s, shoulderY + 20*s);
+      ctx.stroke();
+    } else {
+      ctx.beginPath();
+      ctx.moveTo(x, shoulderY);
+      ctx.lineTo(x + 70*s, shoulderY + armLen);
+      ctx.stroke();
+
+      ctx.beginPath();
+      ctx.moveTo(x, shoulderY);
+      ctx.lineTo(x - 70*s, shoulderY + armLen);
+      ctx.stroke();
+    }
+
+    const hipY = torsoBot;
+    const legLen = 160*s;
+    const phase = p.legPhase || 0;
+    const a = Math.sin(phase) * 52*s;
+
+    ctx.beginPath();
+    ctx.moveTo(x, hipY);
+    ctx.lineTo(x + a, hipY + legLen);
+    ctx.stroke();
+
+    ctx.beginPath();
+    ctx.moveTo(x, hipY);
+    ctx.lineTo(x - a, hipY + legLen);
+    ctx.stroke();
+
+    ctx.lineWidth = 12*s;
+    ctx.beginPath();
+    ctx.moveTo(x + a, hipY + legLen);
+    ctx.lineTo(x + a + 55*s, hipY + legLen);
+    ctx.stroke();
+
+    ctx.beginPath();
+    ctx.moveTo(x - a, hipY + legLen);
+    ctx.lineTo(x - a + 55*s, hipY + legLen);
+    ctx.stroke();
+  }
+
+  function layout(){
+    const W = window.innerWidth;
+    const H = window.innerHeight;
+    const floorY = H * 0.86;
+
+    const doorW = Math.min(200, W*0.26);
+    const doorH = Math.min(520, H*0.46);
+    const doorX = W * 0.72;
+    const doorY = floorY - doorH;
+
+    const baseY = floorY + 70;
+    return {W,H,floorY,doorX,doorY,doorW,doorH,baseY};
+  }
+
+  // ---------- Story timeline (Chapter 1 + added breakup arc) ----------
+  const story = [
+    // 1) Intro
+    { dur: 3.0, act: (t,L)=> {
+      const p = easeOutCubic(t);
+      const mx = lerp(-140, L.W*0.42, p);
+
+      drawDoor(L.doorX, L.doorY, L.doorW, L.doorH, 0);
+      drawStickman({x: mx, y: L.baseY, scale: 1.0, faceImg: imgMohsen, armPose:0, legPhase: t*10});
+      drawStickman({x: L.W*0.80, y: L.baseY, scale: 1.0, faceImg: imgWateen, armPose:0, legPhase:0});
+      drawDoor(L.doorX, L.doorY, L.doorW, L.doorH, 0);
+
+      if(t>0.10){
+        drawSpeech(
+          "عام 2022… أثناء كأس العالم في قطر… كان هناك فتى مسكين اسمه محسن…",
+          L.W*0.06, L.H*0.08, Math.min(560, L.W*0.90), Math.min(170, L.H*0.18),
+          mx, L.H*0.56
+        );
+      }
+    }},
+    // 2) Knock + HP
+    { dur: 3.0, act: (t,L)=> {
+      const p = easeInOut(t);
+      const mx = lerp(L.W*0.42, L.W*0.56, p);
+      const knock = (t>0.22) ? Math.max(0, Math.sin(t*12)) : 0;
+
+      drawDoor(L.doorX, L.doorY, L.doorW, L.doorH, knock);
+      drawStickman({x: mx, y: L.baseY, scale: 1.0, faceImg: imgMohsen, armPose:1, legPhase: t*6});
+      drawStickman({x: L.W*0.80, y: L.baseY, scale: 1.0, faceImg: imgWateen, armPose:0, legPhase:0});
+      drawDoor(L.doorX, L.doorY, L.doorW, L.doorH, knock);
+
+      if(t>0.30){
+        drawSpeech(
+          "محسن:\nتحبين هاري بوتر مثلي؟ ⚡️",
+          L.W*0.06, L.H*0.10, Math.min(560, L.W*0.90), Math.min(170, L.H*0.18),
+          mx, L.H*0.60
+        );
+      }
+    }},
+    // 3) Who are you
+    { dur: 3.2, act: (t,L)=> {
+      drawDoor(L.doorX, L.doorY, L.doorW, L.doorH, 0);
+      drawStickman({x: L.W*0.56, y: L.baseY, scale: 1.0, faceImg: imgMohsen, armPose:0, legPhase:0});
+      drawStickman({x: L.W*0.80, y: L.baseY, scale: 1.0, faceImg: imgWateen, armPose:0, legPhase:0});
+      drawDoor(L.doorX, L.doorY, L.doorW, L.doorH, 0);
+
+      if(t>0.12){
+        drawSpeech(
+          "وتين:\nنعم أحبها…\nبس انت مين؟ 🤨",
+          L.W*0.44, L.H*0.10, Math.min(520, L.W*0.52), Math.min(190, L.H*0.20),
+          L.W*0.80, L.H*0.60
+        );
+      }
+    }},
+    // 4) I just want to...
+    { dur: 2.6, act: (t,L)=> {
+      drawDoor(L.doorX, L.doorY, L.doorW, L.doorH, 0);
+      drawStickman({x: L.W*0.56, y: L.baseY, scale: 1.0, faceImg: imgMohsen, armPose:0, legPhase:0});
+      drawStickman({x: L.W*0.80, y: L.baseY, scale: 1.0, faceImg: imgWateen, armPose:0, legPhase:0});
+      drawDoor(L.doorX, L.doorY, L.doorW, L.doorH, 0);
+
+      const full = "محسن:\nأنا فقط أريد أن…";
+      const n = Math.floor(clamp(t*full.length*1.7, 0, full.length));
+      drawSpeech(
+        full.slice(0,n),
+        L.W*0.06, L.H*0.12, Math.min(560, L.W*0.66), Math.min(170, L.H*0.18),
+        L.W*0.56, L.H*0.62
+      );
+    }},
+    // 5) Shut up
+    { dur: 2.4, act: (t,L)=> {
+      drawDoor(L.doorX, L.doorY, L.doorW, L.doorH, 0);
+      const sh = (t>0.22) ? (Math.sin(t*30)*6) : 0;
+      drawStickman({x: L.W*0.56 + sh, y: L.baseY, scale: 1.0, faceImg: imgMohsen, armPose:0, legPhase:0});
+      drawStickman({x: L.W*0.80, y: L.baseY, scale: 1.0, faceImg: imgWateen, armPose:2, legPhase:0, angryGlow: (t>0.1?1:0)});
+      drawDoor(L.doorX, L.doorY, L.doorW, L.doorH, 0);
+
+      if(t>0.08){
+        drawSpeech(
+          "وتين:\nاخرس.\nغير مهتم. ❌",
+          L.W*0.44, L.H*0.10, Math.min(520, L.W*0.52), Math.min(200, L.H*0.22),
+          L.W*0.80, L.H*0.62
+        );
+      }
+    }},
+    // 6) Writes a lot
+    { dur: 4.4, act: (t,L)=> {
+      drawDoor(L.doorX, L.doorY, L.doorW, L.doorH, 0);
+      const p = easeInOut(t);
+      const mx = lerp(L.W*0.42, L.W*0.60, p);
+      drawStickman({x: mx, y: L.baseY, scale: 1.0, faceImg: imgMohsen, armPose:0, legPhase: t*10});
+      drawStickman({x: L.W*0.80, y: L.baseY, scale: 1.0, faceImg: imgWateen, armPose:0, legPhase:0});
+      drawDoor(L.doorX, L.doorY, L.doorW, L.doorH, 0);
+
+      ctx.fillStyle = "#111";
+      for(let i=0;i<12;i++){
+        const tt = (t*1.25 + i*0.13);
+        const px = (L.W*0.10) + ((tt*320) % (L.W*0.84));
+        const py = (L.H*0.78) - ((tt*tt*160) % (L.H*0.22));
+        ctx.save();
+        ctx.translate(px, py);
+        ctx.rotate(tt*2.0);
+        ctx.fillRect(-10,-6,20,12);
+        ctx.restore();
+      }
+
+      if(t>0.12){
+        drawSpeech(
+          "محسن ما استسلم…\nوقام يكتب لها ملايين الأسطر ✍️",
+          L.W*0.06, L.H*0.08, Math.min(560, L.W*0.90), Math.min(190, L.H*0.20),
+          mx, L.H*0.62
+        );
+      }
+    }},
+    // 7) Wow artist
+    { dur: 3.0, act: (t,L)=> {
+      drawDoor(L.doorX, L.doorY, L.doorW, L.doorH, 0);
+      drawStickman({x: L.W*0.60, y: L.baseY, scale: 1.0, faceImg: imgMohsen, armPose:0, legPhase:0});
+      drawStickman({x: L.W*0.80, y: L.baseY, scale: 1.0, faceImg: imgWateen, armPose:0, legPhase:0});
+      drawDoor(L.doorX, L.doorY, L.doorW, L.doorH, 0);
+
+      drawSparkles(L.W*0.82, L.H*0.46, t, 7);
+
+      if(t>0.12){
+        drawSpeech(
+          "وتين:\nواو يا لك من فنان!\nهل هذا كله من أجلي؟ ✨",
+          L.W*0.44, L.H*0.08, Math.min(520, L.W*0.52), Math.min(210, L.H*0.23),
+          L.W*0.80, L.H*0.62
+        );
+      }
+    }},
+    // 8) Only for you
+    { dur: 2.6, act: (t,L)=> {
+      drawDoor(L.doorX, L.doorY, L.doorW, L.doorH, 0);
+      drawStickman({x: L.W*0.60, y: L.baseY, scale: 1.0, faceImg: imgMohsen, armPose:0, legPhase:0});
+      drawStickman({x: L.W*0.80, y: L.baseY, scale: 1.0, faceImg: imgWateen, armPose:0, legPhase:0});
+      drawDoor(L.doorX, L.doorY, L.doorW, L.doorH, 0);
+
+      if(t>0.10){
+        drawSpeech(
+          "محسن:\nنعم من أجلكِ أنتِ فقط\nيا وتيني 💛",
+          L.W*0.06, L.H*0.12, Math.min(560, L.W*0.66), Math.min(190, L.H*0.20),
+          L.W*0.60, L.H*0.64
+        );
+      }
+
+      for(let i=0;i<6;i++){
+        const tt = t*1.35 + i*0.20;
+        const hx = (L.W*0.60) + Math.sin(tt*3)*18 + i*16;
+        const hy = (L.H*0.54) - tt*130;
+        drawMiniHeart(hx, hy, 10);
+      }
+    }},
+    // 9) Friends
+    { dur: 3.0, act: (t,L)=> {
+      const p = easeInOut(t);
+      const mx = lerp(L.W*0.60, L.W*0.64, p);
+      const wx = lerp(L.W*0.80, L.W*0.76, p);
+
+      drawDoor(L.doorX, L.doorY, L.doorW, L.doorH, 0);
+      drawStickman({x: mx, y: L.baseY, scale: 1.0, faceImg: imgMohsen, armPose:0, legPhase:0});
+      drawStickman({x: wx, y: L.baseY, scale: 1.0, faceImg: imgWateen, armPose:0, legPhase:0});
+      drawDoor(L.doorX, L.doorY, L.doorW, L.doorH, 0);
+
+      if(t>0.10){
+        drawSpeech(
+          "وتين:\nاوه كيووت…\nدعنا نكون أصدقاء 🙂",
+          L.W*0.44, L.H*0.10, Math.min(520, L.W*0.52), Math.min(180, L.H*0.20),
+          wx, L.H*0.64
+        );
+      }
+      if(t>0.55){
+        drawStamp("✅ بداية الصداقة", L.W*0.50, L.H*0.22, Math.min(560, L.W*0.88));
+      }
+    }},
+
+    // --------- Added sequence ---------
+    // 10) Wateen: do you want to see me?
+    { dur: 2.8, act: (t,L)=> {
+      drawDoor(L.doorX, L.doorY, L.doorW, L.doorH, 0);
+      drawStickman({x: L.W*0.62, y: L.baseY, scale: 1.0, faceImg: imgMohsen, armPose:0, legPhase:0});
+      drawStickman({x: L.W*0.78, y: L.baseY, scale: 1.0, faceImg: imgWateen, armPose:0, legPhase:0});
+      drawDoor(L.doorX, L.doorY, L.doorW, L.doorH, 0);
+
+      if(t>0.12){
+        drawSpeech(
+          "وتين:\nهل تريد رؤيتي؟ 🙂",
+          L.W*0.44, L.H*0.10, Math.min(520, L.W*0.52), Math.min(160, L.H*0.18),
+          L.W*0.78, L.H*0.64
+        );
+      }
+    }},
+
+    // 11) Mohsen: I'm at workshop fixing my car
+    { dur: 3.4, act: (t,L)=> {
+      // Move scene to "workshop": put icon on left
+      drawWorkshopIcon(L.W*0.20, L.H*0.56, t);
+
+      // Mohsen near workshop
+      const p = easeInOut(t);
+      const mx = lerp(L.W*0.58, L.W*0.52, p);
+      drawStickman({x: mx, y: L.baseY, scale: 1.0, faceImg: imgMohsen, armPose:0, legPhase:0});
+
+      // Wateen off-screen as chat source (keep her small on right edge)
+      drawStickman({x: L.W*0.88, y: L.baseY, scale: 0.92, faceImg: imgWateen, armPose:0, legPhase:0});
+
+      if(t>0.10){
+        drawSpeech(
+          "محسن:\nأنا في ورشة السيارات\nلإصلاح سيارتي 🚗🔧",
+          L.W*0.06, L.H*0.10, Math.min(560, L.W*0.66), Math.min(190, L.H*0.20),
+          mx, L.H*0.64
+        );
+      }
+    }},
+
+    // 12) Wateen: no problem I'll show you my beauty
+    { dur: 2.8, act: (t,L)=> {
+      drawWorkshopIcon(L.W*0.20, L.H*0.56, t);
+      drawStickman({x: L.W*0.54, y: L.baseY, scale: 1.0, faceImg: imgMohsen, armPose:0, legPhase:0});
+      drawStickman({x: L.W*0.86, y: L.baseY, scale: 0.92, faceImg: imgWateen, armPose:0, legPhase:0});
+
+      if(t>0.12){
+        drawSpeech(
+          "وتين:\nلا بأس…\nدعني أريكِ جمالي ✨",
+          L.W*0.44, L.H*0.10, Math.min(520, L.W*0.52), Math.min(190, L.H*0.20),
+          L.W*0.86, L.H*0.64
+        );
+      }
+    }},
+
+    // 13) Message arrives + phone shows Wateen face + Mohsen wow
+    { dur: 4.2, act: (t,L)=> {
+      drawWorkshopIcon(L.W*0.20, L.H*0.56, t);
+      const mx = L.W*0.54;
+
+      // Mohsen looks at phone (slight tilt)
+      drawStickman({x: mx, y: L.baseY, scale: 1.0, faceImg: imgMohsen, armPose:0, legPhase:0, faceTilt: -0.03});
+
+      // Phone pops in near Mohsen
+      const pop = easeOutCubic(clamp((t-0.15)/0.35, 0, 1));
+      const phW = Math.min(170, L.W*0.22);
+      const phH = phW * 1.85;
+      const px = lerp(L.W*0.38, L.W*0.44, pop);
+      const py = lerp(L.H*0.70, L.H*0.48, pop);
+
+      if(t>0.15){
+        drawPhone(px, py, phW, phH, imgWateen, (0.86 + 0.14*pop));
+        drawSparkles(px + phW*0.55, py + phH*0.35, t, 6);
+      }
+
+      // Mohsen reaction bubble (starts after phone appears)
+      if(t>0.45){
+        drawSpeech(
+          "محسن:\nواااااااو!\nما هذا الجمال ما شاء الله 😳✨\nلا بد أن تكون هذه زوجتي بالمستقبل!",
+          L.W*0.06, L.H*0.08, Math.min(620, L.W*0.90), Math.min(240, L.H*0.26),
+          mx, L.H*0.64
+        );
+      }
+    }},
+
+    // 14) Wateen: end relationship
+    { dur: 3.0, act: (t,L)=> {
+      drawDoor(L.doorX, L.doorY, L.doorW, L.doorH, 0);
+      drawStickman({x: L.W*0.62, y: L.baseY, scale: 1.0, faceImg: imgMohsen, armPose:0, legPhase:0});
+      drawStickman({x: L.W*0.78, y: L.baseY, scale: 1.0, faceImg: imgWateen, armPose:2, legPhase:0});
+      drawDoor(L.doorX, L.doorY, L.doorW, L.doorH, 0);
+
+      if(t>0.12){
+        drawSpeech(
+          "وتين:\nاسمع… أريد أن ننهي علاقتنا.\nلا أشعر بالراحة.",
+          L.W*0.44, L.H*0.10, Math.min(560, L.W*0.52), Math.min(220, L.H*0.24),
+          L.W*0.78, L.H*0.64
+        );
+      }
+    }},
+
+    // 15) Mohsen: why I love you
+    { dur: 2.8, act: (t,L)=> {
+      drawDoor(L.doorX, L.doorY, L.doorW, L.doorH, 0);
+      const sh = (t>0.2) ? Math.sin(t*22)*5 : 0;
+      drawStickman({x: L.W*0.62 + sh, y: L.baseY, scale: 1.0, faceImg: imgMohsen, armPose:0, legPhase:0});
+      drawStickman({x: L.W*0.78, y: L.baseY, scale: 1.0, faceImg: imgWateen, armPose:0, legPhase:0});
+      drawDoor(L.doorX, L.doorY, L.doorW, L.doorH, 0);
+
+      if(t>0.10){
+        drawSpeech(
+          "محسن:\nلماذا!! أنا أحبك 😢",
+          L.W*0.06, L.H*0.12, Math.min(560, L.W*0.60), Math.min(170, L.H*0.18),
+          L.W*0.62, L.H*0.64
+        );
+      }
+    }},
+
+    // 16) Wateen: I'll block you everywhere goodbye
+    { dur: 3.2, act: (t,L)=> {
+      // Wateen walks away to right
+      const p = easeInOut(t);
+      const wx = lerp(L.W*0.78, L.W*1.18, p); // off-screen
+      drawDoor(L.doorX, L.doorY, L.doorW, L.doorH, 0);
+      drawStickman({x: L.W*0.62, y: L.baseY, scale: 1.0, faceImg: imgMohsen, armPose:0, legPhase:0});
+      drawStickman({x: wx, y: L.baseY, scale: 1.0, faceImg: imgWateen, armPose:2, legPhase: t*8, angryGlow: 0});
+      drawDoor(L.doorX, L.doorY, L.doorW, L.doorH, 0);
+
+      // show block icon near Wateen
+      if(t>0.18){
+        ctx.save();
+        ctx.translate(L.W*0.78, L.H*0.42);
+        ctx.rotate(-0.1);
+        ctx.strokeStyle = "#111";
+        ctx.lineWidth = 10;
+        ctx.beginPath();
+        ctx.arc(0,0,42,0,Math.PI*2);
+        ctx.stroke();
+        ctx.beginPath();
+        ctx.moveTo(-30, 30);
+        ctx.lineTo(30, -30);
+        ctx.stroke();
+        ctx.restore();
+      }
+
+      if(t>0.10){
+        drawSpeech(
+          "وتين:\nأعتذر منك…\nسأحظرك في كل مكان.\nوداعًا.",
+          L.W*0.44, L.H*0.08, Math.min(560, L.W*0.52), Math.min(240, L.H*0.26),
+          L.W*0.78, L.H*0.64
+        );
+      }
+    }},
+
+    // 17) Sad end 2022 + Chapter 2 soon
+    { dur: 3.8, act: (t,L)=> {
+      // Mohsen alone
+      drawDoor(L.doorX, L.doorY, L.doorW, L.doorH, 0);
+
+      // slight slouch effect by tilting face a bit
+      drawStickman({x: L.W*0.60, y: L.baseY, scale: 1.0, faceImg: imgMohsen, armPose:0, legPhase:0, faceTilt: 0.03});
+
+      // rain overlay
+      drawRain(t);
+
+      // narration bubble (inside scene)
+      if(t>0.12){
+        drawSpeech(
+          "وغادرت وتين…\nوانتهى عام 2022 بحزن.\n\nالفصل 2 قريبًا…",
+          L.W*0.06, L.H*0.10, Math.min(620, L.W*0.90), Math.min(240, L.H*0.26),
+          L.W*0.60, L.H*0.64
+        );
+      }
+
+      // stamp "الفصل 2 قريبًا" (بعد شوي)
+      if(t>0.58){
+        drawStamp("⏳ الفصل 2 قريبًا", L.W*0.50, L.H*0.26, Math.min(620, L.W*0.90));
+      }
+    }},
+  ];
+
+  // ---------- Playback ----------
+  let state = "idle"; // idle | playing | ended
+  let startTime = 0;
+
+  function totalDuration(){
+    return story.reduce((s,x)=>s+x.dur, 0);
+  }
+
+  function setReplayVisible(v){
+    replayWrap.classList.toggle("show", !!v);
+  }
+
+  function reset(){
+    state = "idle";
+    setReplayVisible(false);
+  }
+
+  function start(){
+    state = "playing";
+    setReplayVisible(false);
+    startTime = performance.now();
+  }
+
+  function end(){
+    state = "ended";
+    setReplayVisible(true);
+  }
+
+  function render(now){
+    const L = layout();
+    clear();
+    drawFloor();
+
+    if(state === "idle"){
+      story[0].act(0, L);
+      requestAnimationFrame(render);
+      return;
+    }
+
+    if(state === "ended"){
+      story[story.length-1].act(1, L);
+      requestAnimationFrame(render);
+      return;
+    }
+
+    const elapsed = (now - startTime)/1000;
+    const total = totalDuration();
+
+    if(elapsed >= total){
+      end();
+      requestAnimationFrame(render);
+      return;
+    }
+
+    let acc = 0;
+    let idx = 0;
+    for(let i=0;i<story.length;i++){
+      const d = story[i].dur;
+      if(elapsed < acc + d){
+        idx = i;
+        break;
+      }
+      acc += d;
+      idx = i;
+    }
+
+    const local = clamp((elapsed - acc) / story[idx].dur, 0, 1);
+    story[idx].act(local, L);
+
+    requestAnimationFrame(render);
+  }
+
+  btnReplay.addEventListener('click', ()=>{
+    reset();
+    start();
+  });
+
+  replayWrap.addEventListener('click', (e)=>{
+    if(e.target === replayWrap){
+      reset(); start();
+    }
+  });
+
+  // Autoplay after 2 seconds
+  reset();
+  requestAnimationFrame(render);
+  setTimeout(()=> start(), 2000);
+
+})();
+</script>
+</body>
+</html>
